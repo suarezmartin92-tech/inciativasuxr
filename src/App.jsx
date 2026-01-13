@@ -1553,13 +1553,12 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [selectedStudyId, setSelectedStudyId] = useState(null);
   const [studies, setStudies] = useState(() => loadStudies());
-export default function App() {
-  const [studies, setStudies] = useState(DEFAULT_STUDIES);
+
   function importFromCSV(file) {
     const reader = new FileReader();
     reader.onload = (e) => {
       const text = e.target.result;
-      const lines = text.split("\n").slice(1); // salta header
+      const lines = text.split("\n").slice(1);
 
       const imported = lines
         .map((l) => l.replaceAll('"', "").trim())

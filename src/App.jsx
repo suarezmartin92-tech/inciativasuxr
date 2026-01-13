@@ -20,6 +20,76 @@ import {
   Plus,
   RotateCcw,
 } from "lucide-react";
+// ---------------------------------
+// CSV NAMING PARSER
+// ---------------------------------
+function parseInitiativeString(raw) {
+  if (!raw || typeof raw !== "string") return null;
+
+  // Responsable (K, M, C, etc.)
+  const responsibleMatch = raw.match(/^([A-Z])\s/);
+  const responsible = responsibleMatch?.[1] || null;
+
+  // Tipo [ 6 ] → Seguimiento
+  const typeMatch = raw.match(/\[\s*(\d)\s*\]/);
+  const typeDigit = typeMatch?.[1] || null;
+
+  const typeMap = {
+    "0": { code: "A_0.001", label: "Investigación" },
+    "2": { code: "A_2.001", label: "Discovery" },
+    "4": { code: "A_4.001", label: "Proyecto" },
+    "6": { code: "A_6.001", label: "Seguimiento" },
+    "8": { code: "A_8.001", label: "Gestión" },
+    "9": { code: "A_9.001", label: "Exposición" },
+  };
+
+  const initiativeType = typeMap[typeDigit] || null;
+
+  // Correlativo
+  const numMatch = raw.match(/\]\s*(\d{3})\s*\(/);
+  const correlativo = numMatch?.[1] || "000";
+
+  // Quarter
+  const quarterMatch = raw.match(/\((Q\d\.\d{2})\)/);
+  const quarter = quarterMatch?.[1] || null;
+
+  // Vertical (UXR, APP, CRO, etc.)
+  const verticalMatch = raw.match(/\)\s*([A-Z]{2,5})/);
+  const verticalCode = verticalMatch?.[1] || null;
+
+  // Técnicas {Encuesta + Test}
+  const techniquesMatch = raw.match(/\{([^}]+)\}/);
+  let techniques = [];
+  if (techniquesMatch) {
+    const t = techniquesMatch[1].trim();
+    techniques =
+      t.toLowerCase() === "mix"
+        ? ["Mix"]
+        : t.split("+").map((x) => x.trim());
+  }
+
+  // Título (lo que queda limpio)
+  const title = raw
+    .replace(/^.*?\)\s*[A-Z]{2,5}・?/, "")
+    .replace(/\{.*\}$/, "")
+    .trim();
+
+  return {
+    id: `CSV-${initiativeType?.code?.[2] || "X"}-${correlativo}`,
+    initiativeTypeCode: initiativeType?.code || null,
+    initiativeTypeLabel: initiativeType?.label || null,
+    quarter,
+    verticalCode,
+    titleShort: title,
+    techniques,
+    responsible,
+    levelKey: null,
+    status: "🟡 Importado",
+    verticalId: null,
+    subproductId: null,
+    parentId: null,
+  };
+}
 
 /**
  * UXR Mejora Continua — Árbol + buscador global + edición + crear iniciativa + filtros
@@ -1483,6 +1553,24 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [selectedStudyId, setSelectedStudyId] = useState(null);
   const [studies, setStudies] = useState(() => loadStudies());
+export default function App() {
+  const [studies, setStudies] = useState(DEFAULT_STUDIES);
+  function importFromCSV(file) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target.result;
+      const lines = text.split("\n").slice(1); // salta header
+
+      const imported = lines
+        .map((l) => l.replaceAll('"', "").trim())
+        .filter(Boolean)
+        .map(parseInitiativeString)
+        .filter(Boolean);
+
+      setStudies((prev) => [...prev, ...imported]);
+    };
+    reader.readAsText(file);
+  }
 
   const [viewMode, setViewMode] = useState("vertical"); // vertical | global
 
@@ -1712,6 +1800,18 @@ export default function App() {
                 <Plus className="h-4 w-4" />
                 Nueva iniciativa
               </button>
+<label className="mt-2 flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm hover:bg-zinc-50">
+  Importar CSV
+  <input
+    type="file"
+    accept=".csv"
+    className="hidden"
+    onChange={(e) => {
+      const file = e.target.files?.[0];
+      if (file) importFromCSV(file);
+    }}
+  />
+</label>
 
               <button
                 onClick={() => setViewMode((m) => (m === "global" ? "vertical" : "global"))}

@@ -98,6 +98,105 @@ const LEVELS = [
 
 // ---------------------------------
 // 1) PRODUCTO / FRANQUICIA (UI del grafo)
+// CSV NAMING PARSER
+// ---------------------------------
+const INITIATIVE_TYPE_DIGITS = Object.fromEntries(
+  INITIATIVE_TYPES.map((t) => {
+    const digit = t.code?.split("_")?.[1]?.split(".")?.[0] || "";
+    return [digit, t];
+  })
+);
+
+const VERTICAL_CODE_SET = new Set(VERTICAL_CODES.map((v) => v.code));
+const RESPONSIBLE_CODE_SET = new Set(RESPONSIBLES.map((r) => r.code));
+
+function parseCsvLine(line) {
+  const cells = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    const nextChar = line[i + 1];
+    if (char === '"' && inQuotes && nextChar === '"') {
+      current += '"';
+      i += 1;
+      continue;
+    }
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (char === "," && !inQuotes) {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+function parseInitiativeString(raw) {
+  if (!raw || typeof raw !== "string") return null;
+
+  // Responsable (K, M, C, etc.)
+  const responsibleMatch = raw.match(/^([A-Z])\s/);
+  const responsibleCandidate = responsibleMatch?.[1] || null;
+  const responsible = RESPONSIBLE_CODE_SET.has(responsibleCandidate) ? responsibleCandidate : null;
+
+  // Tipo [ 6 ] → Seguimiento
+  const typeMatch = raw.match(/\[\s*(\d)\s*\]/);
+  const typeDigit = typeMatch?.[1] || null;
+
+  const initiativeType = INITIATIVE_TYPE_DIGITS[typeDigit] || null;
+
+  // Correlativo
+  const numMatch = raw.match(/\]\s*(\d{3})\s*\(/);
+  const correlativo = numMatch?.[1] || "000";
+
+  // Quarter
+  const quarterMatch = raw.match(/\((Q\d\.\d{2})\)/);
+  const quarter = quarterMatch?.[1] || null;
+
+  // Vertical (UXR, APP, CRO, etc.)
+  const verticalMatch = raw.match(/\)\s*([A-Z]{2,5})/);
+  const verticalCandidate = verticalMatch?.[1] || null;
+  const verticalCode = verticalCandidate && VERTICAL_CODE_SET.has(verticalCandidate) ? verticalCandidate : null;
+
+  // Técnicas {Encuesta + Test}
+  const techniquesMatch = raw.match(/\{([^}]+)\}/);
+  let techniques = [];
+  if (techniquesMatch) {
+    const t = techniquesMatch[1].trim();
+    techniques = t.toLowerCase() === "mix" ? ["Mix"] : t.split("+").map((x) => x.trim());
+  }
+
+  // Título (lo que queda limpio)
+  const title = raw
+    .replace(/^.*?\)\s*[A-Z]{2,5}・?/, "")
+    .replace(/\{.*\}$/, "")
+    .trim();
+
+  return {
+    id: `CSV-${initiativeType?.code?.[2] || "X"}-${correlativo}`,
+    initiativeTypeCode: initiativeType?.code || null,
+    initiativeTypeLabel: initiativeType?.label || null,
+    quarter,
+    verticalCode,
+    titleShort: title,
+    techniques,
+    responsible,
+    levelKey: null,
+    status: "🟡 Importado",
+    verticalId: null,
+    subproductId: null,
+    parentId: null,
+  };
+}
+
+// ---------------------------------
+// 1) VERTICALES (UI del grafo) — renombradas + colores + nueva
 // ---------------------------------
 const PRODUCTS = [
   { id: "flow", name: "Flow", color: "#21D3A2", verticals: ["FLW"] },
@@ -1697,6 +1796,10 @@ export default function App() {
         window.alert(
           `El CSV debe incluir las columnas: Responsable, Iniciativa, Orden, Q, Vertical, Título, Método o recursos, Nivel.`
         );
+      const headerCells = parseCsvLine(rows[0]).map((cell) => cell.replaceAll('"', "").trim());
+      const initiativeIndex = headerCells.findIndex((cell) => cell === "Iniciativas");
+      if (initiativeIndex === -1) {
+        window.alert('El CSV debe incluir una columna llamada "Iniciativas".');
         return;
       }
 
@@ -1751,6 +1854,10 @@ export default function App() {
             links: [],
           };
         })
+        .map((line) => parseCsvLine(line)[initiativeIndex] || "")
+        .map((cell) => cell.replaceAll('"', "").trim())
+        .filter(Boolean)
+        .map(parseInitiativeString)
         .filter(Boolean);
 
       setStudies((prev) => [...prev, ...imported]);

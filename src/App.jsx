@@ -20,77 +20,6 @@ import {
   Plus,
   RotateCcw,
 } from "lucide-react";
-// ---------------------------------
-// CSV NAMING PARSER
-// ---------------------------------
-function parseInitiativeString(raw) {
-  if (!raw || typeof raw !== "string") return null;
-
-  // Responsable (K, M, C, etc.)
-  const responsibleMatch = raw.match(/^([A-Z])\s/);
-  const responsible = responsibleMatch?.[1] || null;
-
-  // Tipo [ 6 ] → Seguimiento
-  const typeMatch = raw.match(/\[\s*(\d)\s*\]/);
-  const typeDigit = typeMatch?.[1] || null;
-
-  const typeMap = {
-    "0": { code: "A_0.001", label: "Investigación" },
-    "2": { code: "A_2.001", label: "Discovery" },
-    "4": { code: "A_4.001", label: "Proyecto" },
-    "6": { code: "A_6.001", label: "Seguimiento" },
-    "8": { code: "A_8.001", label: "Gestión" },
-    "9": { code: "A_9.001", label: "Exposición" },
-  };
-
-  const initiativeType = typeMap[typeDigit] || null;
-
-  // Correlativo
-  const numMatch = raw.match(/\]\s*(\d{3})\s*\(/);
-  const correlativo = numMatch?.[1] || "000";
-
-  // Quarter
-  const quarterMatch = raw.match(/\((Q\d\.\d{2})\)/);
-  const quarter = quarterMatch?.[1] || null;
-
-  // Vertical (UXR, APP, CRO, etc.)
-  const verticalMatch = raw.match(/\)\s*([A-Z]{2,5})/);
-  const verticalCode = verticalMatch?.[1] || null;
-
-  // Técnicas {Encuesta + Test}
-  const techniquesMatch = raw.match(/\{([^}]+)\}/);
-  let techniques = [];
-  if (techniquesMatch) {
-    const t = techniquesMatch[1].trim();
-    techniques =
-      t.toLowerCase() === "mix"
-        ? ["Mix"]
-        : t.split("+").map((x) => x.trim());
-  }
-
-  // Título (lo que queda limpio)
-  const title = raw
-    .replace(/^.*?\)\s*[A-Z]{2,5}・?/, "")
-    .replace(/\{.*\}$/, "")
-    .trim();
-
-  return {
-    id: `CSV-${initiativeType?.code?.[2] || "X"}-${correlativo}`,
-    initiativeTypeCode: initiativeType?.code || null,
-    initiativeTypeLabel: initiativeType?.label || null,
-    quarter,
-    verticalCode,
-    titleShort: title,
-    techniques,
-    responsible,
-    levelKey: null,
-    status: "🟡 Importado",
-    verticalId: null,
-    subproductId: null,
-    parentId: null,
-  };
-}
-
 /**
  * UXR Mejora Continua — Árbol + buscador global + edición + crear iniciativa + filtros
  *
@@ -167,6 +96,104 @@ const LEVELS = [
     allowedTypes: ["Investigación", "Exposición", "Gestión"],
   },
 ];
+
+// ---------------------------------
+// CSV NAMING PARSER
+// ---------------------------------
+const INITIATIVE_TYPE_DIGITS = Object.fromEntries(
+  INITIATIVE_TYPES.map((t) => {
+    const digit = t.code?.split("_")?.[1]?.split(".")?.[0] || "";
+    return [digit, t];
+  })
+);
+
+const VERTICAL_CODE_SET = new Set(VERTICAL_CODES.map((v) => v.code));
+const RESPONSIBLE_CODE_SET = new Set(RESPONSIBLES.map((r) => r.code));
+
+function parseCsvLine(line) {
+  const cells = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    const nextChar = line[i + 1];
+    if (char === '"' && inQuotes && nextChar === '"') {
+      current += '"';
+      i += 1;
+      continue;
+    }
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (char === "," && !inQuotes) {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+function parseInitiativeString(raw) {
+  if (!raw || typeof raw !== "string") return null;
+
+  // Responsable (K, M, C, etc.)
+  const responsibleMatch = raw.match(/^([A-Z])\s/);
+  const responsibleCandidate = responsibleMatch?.[1] || null;
+  const responsible = RESPONSIBLE_CODE_SET.has(responsibleCandidate) ? responsibleCandidate : null;
+
+  // Tipo [ 6 ] → Seguimiento
+  const typeMatch = raw.match(/\[\s*(\d)\s*\]/);
+  const typeDigit = typeMatch?.[1] || null;
+
+  const initiativeType = INITIATIVE_TYPE_DIGITS[typeDigit] || null;
+
+  // Correlativo
+  const numMatch = raw.match(/\]\s*(\d{3})\s*\(/);
+  const correlativo = numMatch?.[1] || "000";
+
+  // Quarter
+  const quarterMatch = raw.match(/\((Q\d\.\d{2})\)/);
+  const quarter = quarterMatch?.[1] || null;
+
+  // Vertical (UXR, APP, CRO, etc.)
+  const verticalMatch = raw.match(/\)\s*([A-Z]{2,5})/);
+  const verticalCandidate = verticalMatch?.[1] || null;
+  const verticalCode = verticalCandidate && VERTICAL_CODE_SET.has(verticalCandidate) ? verticalCandidate : null;
+
+  // Técnicas {Encuesta + Test}
+  const techniquesMatch = raw.match(/\{([^}]+)\}/);
+  let techniques = [];
+  if (techniquesMatch) {
+    const t = techniquesMatch[1].trim();
+    techniques = t.toLowerCase() === "mix" ? ["Mix"] : t.split("+").map((x) => x.trim());
+  }
+
+  // Título (lo que queda limpio)
+  const title = raw
+    .replace(/^.*?\)\s*[A-Z]{2,5}・?/, "")
+    .replace(/\{.*\}$/, "")
+    .trim();
+
+  return {
+    id: `CSV-${initiativeType?.code?.[2] || "X"}-${correlativo}`,
+    initiativeTypeCode: initiativeType?.code || null,
+    initiativeTypeLabel: initiativeType?.label || null,
+    quarter,
+    verticalCode,
+    titleShort: title,
+    techniques,
+    responsible,
+    levelKey: null,
+    status: "🟡 Importado",
+    verticalId: null,
+    subproductId: null,
+    parentId: null,
+  };
+}
 
 // ---------------------------------
 // 1) VERTICALES (UI del grafo) — renombradas + colores + nueva
@@ -1558,10 +1585,24 @@ export default function App() {
     const reader = new FileReader();
     reader.onload = (e) => {
       const text = e.target.result;
-      const lines = text.split("\n").slice(1);
+      const rows = String(text || "")
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
 
-      const imported = lines
-        .map((l) => l.replaceAll('"', "").trim())
+      if (!rows.length) return;
+
+      const headerCells = parseCsvLine(rows[0]).map((cell) => cell.replaceAll('"', "").trim());
+      const initiativeIndex = headerCells.findIndex((cell) => cell === "Iniciativas");
+      if (initiativeIndex === -1) {
+        window.alert('El CSV debe incluir una columna llamada "Iniciativas".');
+        return;
+      }
+
+      const imported = rows
+        .slice(1)
+        .map((line) => parseCsvLine(line)[initiativeIndex] || "")
+        .map((cell) => cell.replaceAll('"', "").trim())
         .filter(Boolean)
         .map(parseInitiativeString)
         .filter(Boolean);

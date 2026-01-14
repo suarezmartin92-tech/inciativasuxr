@@ -97,6 +97,22 @@ const LEVELS = [
 ];
 
 // ---------------------------------
+// 1) PRODUCTO / FRANQUICIA (UI del grafo)
+// ---------------------------------
+const PRODUCTS = [
+  { id: "flow", name: "Flow", color: "#21D3A2", verticals: ["FLW"] },
+  { id: "linea-movil", name: "Línea móvil", color: "#1EB2F5", verticals: ["PER", "PRE", "ABN", "POR", "ROA"] },
+  { id: "internet-fibra", name: "Internet hogar (Fibra)", color: "#1EB2F5", verticals: ["NET"] },
+  { id: "ppay", name: "PPay", color: "#5A50F9", verticals: ["PPAY"] },
+  { id: "tienda-personal", name: "Tienda Personal", color: "#1EB2F5", verticals: ["TDA"] },
+  { id: "smarthome", name: "Smarthome", color: "#052C50", verticals: ["SMH"] },
+  { id: "personal-tech", name: "Personal Tech", color: "#1EB2F5", verticals: ["B2B"] },
+  { id: "app", name: "APP", color: "#4F46E5", verticals: ["APP", "APW"] },
+  { id: "sfe", name: "SFE", color: "#0EA5E9", verticals: ["CDG", "CRO", "SOL", "UXR", "DSY"] },
+  { id: "ext", name: "EXT", color: "#F97316", verticals: ["PAR", "UYP", "UYF"] },
+];
+
+// ---------------------------------
 // CSV NAMING PARSER
 // ---------------------------------
 const INITIATIVE_TYPE_DIGITS = Object.fromEntries(
@@ -215,22 +231,6 @@ function levelKeyFromValue(value) {
   const normalized = normalizeHeader(value);
   return LEVEL_LABEL_TO_KEY[normalized] || null;
 }
-
-// ---------------------------------
-// 1) PRODUCTO / FRANQUICIA (UI del grafo)
-// ---------------------------------
-const PRODUCTS = [
-  { id: "flow", name: "Flow", color: "#21D3A2", verticals: ["FLW"] },
-  { id: "linea-movil", name: "Línea móvil", color: "#1EB2F5", verticals: ["PER", "PRE", "ABN", "POR", "ROA"] },
-  { id: "internet-fibra", name: "Internet hogar (Fibra)", color: "#1EB2F5", verticals: ["NET"] },
-  { id: "ppay", name: "PPay", color: "#5A50F9", verticals: ["PPAY"] },
-  { id: "tienda-personal", name: "Tienda Personal", color: "#1EB2F5", verticals: ["TDA"] },
-  { id: "smarthome", name: "Smarthome", color: "#052C50", verticals: ["SMH"] },
-  { id: "personal-tech", name: "Personal Tech", color: "#1EB2F5", verticals: ["B2B"] },
-  { id: "app", name: "APP", color: "#4F46E5", verticals: ["APP", "APW"] },
-  { id: "sfe", name: "SFE", color: "#0EA5E9", verticals: ["CDG", "CRO", "SOL", "UXR", "DSY"] },
-  { id: "ext", name: "EXT", color: "#F97316", verticals: ["PAR", "UYP", "UYF"] },
-];
 
 // ---------------------------------
 // 2) DATA DE EJEMPLO

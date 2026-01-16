@@ -3,6 +3,15 @@ import ReactFlow, { Background, Controls, MiniMap, Handle, Position } from "reac
 import "reactflow/dist/style.css";
 import { motion, AnimatePresence } from "framer-motion";
 import {
+  CATALOG_MAPS,
+  INITIATIVE_TYPES,
+  LEVELS,
+  PRODUCTS,
+  RESPONSIBLES,
+  VERTICAL_CODES,
+  normalizeHeader,
+} from "./catalogs";
+import {
   Search,
   ChevronRight,
   Layers,
@@ -33,15 +42,26 @@ import {
 // ---------------------------------
 // 0) CATALOGOS (tu convención)
 // ---------------------------------
-const INITIATIVE_TYPES = [
-  { code: "A_0.001", label: "Investigación" },
-  { code: "A_2.001", label: "Discovery" },
-  { code: "A_4.001", label: "Proyecto" },
-  { code: "A_6.001", label: "Seguimiento" },
-  { code: "A_8.001", label: "Gestión" },
-  { code: "A_9.001", label: "Exposición" },
-];
+function slugify(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
 
+function formatOrderNumber(value) {
+  const match = String(value || "").match(/\d+/);
+  if (!match) return null;
+  const num = parseInt(match[0], 10);
+  if (!Number.isFinite(num)) return null;
+  return String(num).padStart(3, "0");
+}
+
+function studyTypeDigit(initiativeTypeCode) {
+  return typeDigitFromInitiativeTypeCode(initiativeTypeCode);
+}
 const VERTICAL_CODES = [
   { code: "APP", label: "App" },
   { code: "APW", label: "App Web" },
@@ -75,27 +95,70 @@ const RESPONSIBLES = [
   { code: "S", name: "Seri" },
 ];
 
-const LEVELS = [
-  {
-    key: "estrategico",
-    label: "Estratégico",
-    desc: "Objetivos a largo plazo, alto impacto dentro y fuera del ecosistema digital.",
-    allowedTypes: ["Investigación", "Discovery", "Proyecto"],
-  },
-  {
-    key: "tactico",
-    label: "Táctico",
-    desc: "Objetivos a corto plazo, resultados puntuales dentro del ecosistema digital.",
-    allowedTypes: ["Investigación", "Seguimiento", "Gestión"],
-  },
-  {
-    key: "proceso-interno",
-    label: "Proceso interno",
-    desc: "Optimiza estructura/flujo de trabajo para habilitar lo táctico y estratégico.",
-    allowedTypes: ["Investigación", "Exposición", "Gestión"],
-  },
-];
+function buildStudyId(responsible, initiativeTypeCode, orderNumber) {
+  const digit = studyTypeDigit(initiativeTypeCode);
+  const order = formatOrderNumber(orderNumber) || "000";
+  const resp = String(responsible || "X").toUpperCase();
+  return `${resp}-${digit}-${order}`;
+}
 
+function formatStudyCode(idOrStudy) {
+  const value = typeof idOrStudy === "string" ? idOrStudy : idOrStudy?.id;
+  const match = String(value || "").match(/^([A-Z])-(\d)-(\d{3})$/);
+  if (!match) return value || "";
+  const [, resp, digit, order] = match;
+  return `${resp} [${digit}]${order}`;
+}
+
+function parseDerivationValue(value) {
+  if (!value) return null;
+  const raw = String(value || "");
+  const match = raw.match(/([A-Za-z])\s*\[\s*([0-9])\s*\]\s*([0-9]{1,3})/);
+  if (!match) return null;
+  const [, resp, digit, orderRaw] = match;
+  const order = formatOrderNumber(orderRaw);
+  if (!order) return null;
+  return `${resp.toUpperCase()}-${digit}-${order}`;
+}
+
+function verticalLabel(code) {
+  return CATALOG_MAPS.verticalCodeMap[code] || code || "—";
+}
+
+function productMeta(productId) {
+  return CATALOG_MAPS.productById[productId] || null;
+}
+
+function productIdForVertical(code) {
+  return CATALOG_MAPS.verticalToProduct[code] || null;
+}
+
+function normalizeTechniques(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return [];
+  if (value.toLowerCase() === "mix") return ["Mix"];
+  return value
+    .split(/[+,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function extractSubproductFromTitle(title) {
+  const raw = String(title || "").trim();
+  const match = raw.match(/\[([^\]]+)\]/);
+  const subproductName = match ? match[1].trim() : "";
+  const cleanedTitle = raw.replace(/\s*\[[^\]]+\]\s*/, " ").replace(/\s+/g, " ").trim();
+  return { subproductName, cleanedTitle };
+}
+
+function ensureSubproduct(verticalCode, subproductName) {
+  const name = (subproductName || "").trim() || "Sin subproducto";
+  const keyBase = verticalCode || "sin-vertical";
+  return {
+    name,
+    id: `${keyBase}-${slugify(name)}`,
+  };
+}
 // ---------------------------------
 // 1) PRODUCTO / FRANQUICIA (UI del grafo)
 // CSV NAMING PARSER
@@ -137,6 +200,18 @@ function parseCsvLine(line) {
   return cells;
 }
 
+function initiativeTypeFromValue(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const match = raw.match(/A_([0-9])\./) || raw.match(/([0-9])/);
+  const digit = match?.[1] || null;
+  return digit ? CATALOG_MAPS.initiativeTypeDigits[digit] || null : null;
+}
+
+function levelKeyFromValue(value) {
+  const normalized = normalizeHeader(value);
+  return CATALOG_MAPS.levelLabelToKey[normalized] || null;
+}
 function parseInitiativeString(raw) {
   if (!raw || typeof raw !== "string") return null;
 
@@ -1330,6 +1405,58 @@ function buildProductGraph({ productId, search, filters, studies }) {
         });
 
         if (s.parentId && filteredMap.has(s.parentId)) {
+          edges.push({
+            id: `e:study:${s.parentId}->study:${s.id}`,
+            source: `study:${s.parentId}`,
+            target: `study:${s.id}`,
+            animated: true,
+            style: { strokeWidth: 2 },
+          });
+        }
+
+    const subGap = 320;
+    const subY = 360;
+    subproducts.forEach((sub, subIndex) => {
+      const sx = vx + subIndex * subGap - ((subproducts.length - 1) * subGap) / 2;
+      nodes.push({
+        id: `sub:${product.id}:${vertical.code}:${sub.id}`,
+        type: "subproduct",
+        position: { x: sx, y: subY },
+        data: { name: sub.name, subtitle: "Subproducto" },
+      });
+
+      edges.push({
+        id: `e:vertical:${product.id}:${vertical.code}->sub:${sub.id}`,
+        source: `vertical:${product.id}:${vertical.code}`,
+        target: `sub:${product.id}:${vertical.code}:${sub.id}`,
+        animated: false,
+        style: { strokeWidth: 2 },
+      });
+
+      const ordered = orderStudiesByHierarchy(sub.items);
+      const baseY = 520;
+      ordered.forEach(({ s, depth }, idx) => {
+        const x = sx + depth * 120;
+        const y = baseY + idx * 140;
+        nodes.push({
+          id: `study:${s.id}`,
+          type: "study",
+          position: { x, y },
+          data: {
+            ...s,
+            verticalColor: product.color,
+            preview: clamp((s.insights?.[0] || s.notes || "").toString(), 120),
+          },
+        });
+
+        edges.push({
+          id: `e:sub:${sub.id}->study:${s.id}`,
+          source: `sub:${product.id}:${vertical.code}:${sub.id}`,
+          target: `study:${s.id}`,
+          style: { strokeWidth: 2 },
+        });
+
+        if (s.parentId && filteredMap.has(s.parentId)) {
 
       const ordered = orderStudiesByHierarchy(sub.items);
       const baseY = 520;
@@ -1551,12 +1678,278 @@ function buildGlobalGraph({ search, filters, studies, sortKey, sortDirection }) 
   });
 
   return {
+    mode: "product",
+    title: product.name,
     mode: "global",
     title: "Resultados globales",
     nodes,
     edges,
     filteredStudies: matched,
     studiesInScope: matched,
+  };
+}
+
+function buildGlobalGraph({ search, filters, studies, sortKey, sortDirection }) {
+  const matched = applySearchAndFilters(studies, search, filters);
+  const sortedMatched = sortStudies(matched, sortKey, sortDirection);
+  const matchedMap = new Map(matched.map((s) => [s.id, s]));
+  const byProduct = new Map();
+  sortedMatched.forEach((s) => {
+    const pId = s.productId || "(sin producto)";
+    if (!byProduct.has(pId)) byProduct.set(pId, []);
+    byProduct.get(pId).push(s);
+  });
+
+  const products = Array.from(byProduct.keys())
+    .map((id) => productMeta(id))
+    .filter(Boolean);
+
+  const nodes = [];
+  const edges = [];
+  const productGap = 620;
+
+  products.forEach((product, productIndex) => {
+    const px = productIndex * productGap - ((products.length - 1) * productGap) / 2;
+    nodes.push({
+      id: `product:${product.id}`,
+      type: "product",
+      position: { x: px, y: 0 },
+      data: {
+        name: product.name,
+        subtitle: `${product.verticals.length} verticales`,
+        color: product.color,
+      },
+    });
+
+    const studiesInProduct = byProduct.get(product.id) || [];
+    const byVertical = new Map();
+    studiesInProduct.forEach((s) => {
+      const code = s.verticalCode || "(sin vertical)";
+      if (!byVertical.has(code)) byVertical.set(code, []);
+      byVertical.get(code).push(s);
+    });
+
+    const verticals = Array.from(byVertical.keys()).map((code) => ({
+      code,
+      name: verticalLabel(code),
+    }));
+
+    const verticalGap = 380;
+    const verticalY = 200;
+    verticals.forEach((vertical, verticalIndex) => {
+      const vx = px + verticalIndex * verticalGap - ((verticals.length - 1) * verticalGap) / 2;
+      nodes.push({
+        id: `vertical:${product.id}:${vertical.code}`,
+        type: "vertical",
+        position: { x: vx, y: verticalY },
+        data: {
+          code: vertical.code,
+          name: vertical.name,
+          subtitle: "Vertical",
+function buildVerticalGraph({ verticalCode, search, filters, studies, sortKey, sortDirection }) {
+  const scope = studies.filter((s) => s.verticalCode === verticalCode);
+  const filteredStudies = applySearchAndFilters(scope, search, filters);
+  const sortedStudies = sortStudies(filteredStudies, sortKey, sortDirection);
+  const filteredMap = new Map(filteredStudies.map((s) => [s.id, s]));
+
+  const nodes = [];
+  const edges = [];
+  const productId = productIdForVertical(verticalCode);
+  const product = productMeta(productId);
+
+  if (product) {
+    nodes.push({
+      id: `product:${product.id}`,
+      type: "product",
+      position: { x: 0, y: 0 },
+      data: {
+        name: product.name,
+        subtitle: `${product.verticals.length} verticales`,
+        color: product.color,
+      },
+    });
+  }
+
+  const verticalName = verticalLabel(verticalCode);
+  const verticalY = product ? 180 : 0;
+  const verticalNodeId = `vertical:${product?.id || "none"}:${verticalCode}`;
+  nodes.push({
+    id: verticalNodeId,
+    type: "vertical",
+    position: { x: 0, y: verticalY },
+    data: {
+      code: verticalCode,
+      name: verticalName,
+      subtitle: "Vertical",
+    },
+  });
+
+  if (product) {
+    edges.push({
+      id: `e:product:${product.id}->vertical:${verticalCode}`,
+      source: `product:${product.id}`,
+      target: verticalNodeId,
+      style: { strokeWidth: 2 },
+    });
+  }
+
+  const subMap = new Map();
+  sortedStudies.forEach((s) => {
+    const fallback = ensureSubproduct(s.verticalCode, s.subproductName);
+    const subKey = s.subproductId || fallback.id;
+    if (!subMap.has(subKey)) {
+      subMap.set(subKey, {
+        name: s.subproductName || fallback.name,
+        items: [],
+      });
+    }
+    subMap.get(subKey).items.push(s);
+  });
+
+  const subproducts = Array.from(subMap.entries()).map(([id, value]) => ({
+    id,
+    name: value.name,
+    items: value.items,
+  }));
+
+  const subGap = 320;
+  const subY = verticalY + 180;
+  subproducts.forEach((sub, subIndex) => {
+    const sx = subIndex * subGap - ((subproducts.length - 1) * subGap) / 2;
+    nodes.push({
+      id: `sub:${verticalCode}:${sub.id}`,
+      type: "subproduct",
+      position: { x: sx, y: subY },
+      data: { name: sub.name, subtitle: "Subproducto" },
+    });
+
+    edges.push({
+      id: `e:vertical:${verticalCode}->sub:${sub.id}`,
+      source: verticalNodeId,
+      target: `sub:${verticalCode}:${sub.id}`,
+      style: { strokeWidth: 2 },
+    });
+
+    const ordered = orderStudiesByHierarchy(sub.items);
+    const baseY = subY + 160;
+    ordered.forEach(({ s, depth }, idx) => {
+      const x = sx + depth * 120;
+      const y = baseY + idx * 140;
+      nodes.push({
+        id: `study:${s.id}`,
+        type: "study",
+        position: { x, y },
+        data: {
+          ...s,
+          verticalColor: product?.color || "#9ca3af",
+          preview: clamp((s.insights?.[0] || s.notes || "").toString(), 120),
+        },
+      });
+
+      edges.push({
+        id: `e:product:${product.id}->vertical:${vertical.code}`,
+        source: `product:${product.id}`,
+        target: `vertical:${product.id}:${vertical.code}`,
+        style: { strokeWidth: 2 },
+      });
+
+      const studiesInVertical = byVertical.get(vertical.code) || [];
+      const subMap = new Map();
+      studiesInVertical.forEach((s) => {
+        const fallback = ensureSubproduct(s.verticalCode, s.subproductName);
+        const subKey = s.subproductId || fallback.id;
+        if (!subMap.has(subKey)) {
+          subMap.set(subKey, {
+            name: s.subproductName || fallback.name,
+            items: [],
+          });
+        }
+        subMap.get(subKey).items.push(s);
+      });
+
+      const subproducts = Array.from(subMap.entries()).map(([id, value]) => ({
+        id,
+        name: value.name,
+        items: value.items,
+      }));
+
+      const subGap = 300;
+      const subY = 380;
+      subproducts.forEach((sub, subIndex) => {
+        const sx = vx + subIndex * subGap - ((subproducts.length - 1) * subGap) / 2;
+        nodes.push({
+          id: `sub:${product.id}:${vertical.code}:${sub.id}`,
+          type: "subproduct",
+          position: { x: sx, y: subY },
+          data: { name: sub.name, subtitle: "Subproducto" },
+        });
+
+        edges.push({
+          id: `e:vertical:${product.id}:${vertical.code}->sub:${sub.id}`,
+          source: `vertical:${product.id}:${vertical.code}`,
+          target: `sub:${product.id}:${vertical.code}:${sub.id}`,
+          style: { strokeWidth: 2 },
+        });
+
+        const ordered = orderStudiesByHierarchy(sub.items);
+        const baseY = 540;
+        ordered.forEach(({ s, depth }, idx) => {
+          const x = sx + depth * 120;
+          const y = baseY + idx * 140;
+          nodes.push({
+            id: `study:${s.id}`,
+            type: "study",
+            position: { x, y },
+            data: {
+              ...s,
+              verticalColor: product.color,
+              preview: clamp((s.insights?.[0] || s.notes || "").toString(), 120),
+            },
+          });
+
+          edges.push({
+            id: `e:sub:${sub.id}->study:${s.id}`,
+            source: `sub:${product.id}:${vertical.code}:${sub.id}`,
+            target: `study:${s.id}`,
+            style: { strokeWidth: 2 },
+          });
+
+          if (s.parentId && matchedMap.has(s.parentId)) {
+            edges.push({
+              id: `e:study:${s.parentId}->study:${s.id}`,
+              source: `study:${s.parentId}`,
+              target: `study:${s.id}`,
+              animated: true,
+              style: { strokeWidth: 2 },
+            });
+          }
+        });
+      });
+        id: `e:sub:${sub.id}->study:${s.id}`,
+        source: `sub:${verticalCode}:${sub.id}`,
+        target: `study:${s.id}`,
+        style: { strokeWidth: 2 },
+      });
+
+      if (s.parentId && filteredMap.has(s.parentId)) {
+        edges.push({
+          id: `e:study:${s.parentId}->study:${s.id}`,
+          source: `study:${s.parentId}`,
+          target: `study:${s.id}`,
+          animated: true,
+          style: { strokeWidth: 2 },
+        });
+      }
+    });
+  });
+
+  return {
+    mode: "vertical",
+    title: verticalName,
+    nodes,
+    edges,
+    filteredStudies,
+    studiesInScope: scope,
   };
 }
 
@@ -2268,6 +2661,11 @@ export default function App() {
         .filter(([, idx]) => idx === -1)
         .map(([key]) => key);
 
+
+      const missing = Object.entries(indexes)
+        .filter(([, idx]) => idx === -1)
+        .map(([key]) => key);
+
       if (missing.length > 0) {
         window.alert(
           `El CSV debe incluir las columnas: Responsable, Iniciativa, Orden, Q, Vertical, Título, Método o recursos, Nivel, Derivación.`
@@ -2433,6 +2831,14 @@ export default function App() {
       return buildVerticalGraph({ verticalCode: verticalViewCode, search, filters, studies, sortKey, sortDirection });
     return buildProductGraph({ productId, search, filters, studies, sortKey, sortDirection });
   }, [viewMode, productId, verticalViewCode, search, filters, studies, sortKey, sortDirection]);
+  const activeFiltersCount = useMemo(() => countActiveFilters(filters), [filters]);
+
+  const graph = useMemo(() => {
+    if (viewMode === "global") return buildGlobalGraph({ search, filters, studies, sortKey, sortDirection });
+    if (viewMode === "vertical")
+      return buildVerticalGraph({ verticalCode: verticalViewCode, search, filters, studies, sortKey, sortDirection });
+    return buildProductGraph({ productId, search, filters, studies, sortKey, sortDirection });
+  }, [viewMode, productId, verticalViewCode, search, filters, studies, sortKey, sortDirection]);
   useEffect(() => {
     if (viewMode === "global" && !search.trim()) setViewMode("product");
   }, [viewMode, search]);
@@ -2494,6 +2900,7 @@ export default function App() {
       setSelectedStudyId(studyId);
       setSelectedStudyId(studyId);
       setSelectedStudyId(studyId);
+      setSelectedStudyId(studyId);
       if (viewMode === "global") setViewMode("product");
     },
     [studies]
@@ -2501,6 +2908,15 @@ export default function App() {
 
   useEffect(() => {
     if (viewMode !== "product" && viewMode !== "vertical") return;
+    if (!selectedStudyId) return;
+    const s = studies.find((x) => x.id === selectedStudyId);
+    if (!s) {
+      setSelectedStudyId(null);
+      return;
+    }
+    if (viewMode === "product" && s.productId !== productId) setSelectedStudyId(null);
+    if (viewMode === "vertical" && s.verticalCode !== verticalViewCode) setSelectedStudyId(null);
+  }, [viewMode, productId, verticalViewCode, selectedStudyId, studies]);
     if (!selectedStudyId) return;
     const s = studies.find((x) => x.id === selectedStudyId);
     if (!s) {

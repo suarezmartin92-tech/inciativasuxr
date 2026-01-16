@@ -270,6 +270,36 @@ function parseDerivationValue(value) {
   return `${resp.toUpperCase()}-${digit}-${order}`;
 }
 
+const CATALOG_MAPS = {
+  initiativeTypeDigits: Object.fromEntries(
+    INITIATIVE_TYPES.map((t) => {
+      const digit = t.code?.split("_")?.[1]?.split(".")?.[0] || "";
+      return [digit, t];
+    })
+  ),
+  verticalCodeMap: Object.fromEntries(VERTICAL_CODES.map((v) => [v.code, v.label])),
+  verticalCodeSet: new Set(VERTICAL_CODES.map((v) => v.code)),
+  responsibleCodeSet: new Set(RESPONSIBLES.map((r) => r.code)),
+  productById: Object.fromEntries(PRODUCTS.map((p) => [p.id, p])),
+  verticalToProduct: PRODUCTS.reduce((acc, product) => {
+    product.verticals.forEach((code) => {
+      acc[code] = product.id;
+    });
+    return acc;
+  }, {}),
+  levelLabelToKey: Object.fromEntries(LEVELS.map((l) => [normalizeHeader(l.label), l.key])),
+};
+
+function verticalLabel(code) {
+  return CATALOG_MAPS.verticalCodeMap[code] || code || "—";
+}
+
+function productMeta(productId) {
+  return CATALOG_MAPS.productById[productId] || null;
+}
+
+function productIdForVertical(code) {
+  return CATALOG_MAPS.verticalToProduct[code] || null;
 const INITIATIVE_TYPE_DIGITS = Object.fromEntries(
   INITIATIVE_TYPES.map((t) => {
     const digit = t.code?.split("_")?.[1]?.split(".")?.[0] || "";
@@ -379,11 +409,13 @@ function initiativeTypeFromValue(value) {
   if (!raw) return null;
   const match = raw.match(/A_([0-9])\./) || raw.match(/([0-9])/);
   const digit = match?.[1] || null;
+  return digit ? CATALOG_MAPS.initiativeTypeDigits[digit] || null : null;
   return digit ? INITIATIVE_TYPE_DIGITS[digit] || null : null;
 }
 
 function levelKeyFromValue(value) {
   const normalized = normalizeHeader(value);
+  return CATALOG_MAPS.levelLabelToKey[normalized] || null;
   return LEVEL_LABEL_TO_KEY[normalized] || null;
 }
 
@@ -1168,6 +1200,12 @@ function orderStudiesByHierarchy(arr) {
     (children.get(s.id) || []).forEach((c) => dfs(c, depth + 1));
   };
 
+  const out = [];
+  const dfs = (s, depth = 0) => {
+    out.push({ s, depth });
+    (children.get(s.id) || []).forEach((c) => dfs(c, depth + 1));
+  };
+
   roots.forEach((r) => dfs(r, 0));
   return out;
 }
@@ -1178,6 +1216,7 @@ function buildProductGraph({ productId, search, filters, studies, sortKey, sortD
   return out;
 }
 
+function buildProductGraph({ productId, search, filters, studies, sortKey, sortDirection }) {
 function buildProductGraph({ productId, search, filters, studies }) {
   const product = productMeta(productId) || PRODUCTS[0];
   const scope = studies.filter((s) => s.productId === product.id);
@@ -2233,6 +2272,14 @@ export default function App() {
         window.alert(
           `El CSV debe incluir las columnas: Responsable, Iniciativa, Orden, Q, Vertical, Título, Método o recursos, Nivel, Derivación.`
         );
+        return;
+      }
+
+
+      if (missing.length > 0) {
+        window.alert(
+          `El CSV debe incluir las columnas: Responsable, Iniciativa, Orden, Q, Vertical, Título, Método o recursos, Nivel, Derivación.`
+        );
 
       if (!rows.length) return;
 
@@ -2285,6 +2332,11 @@ export default function App() {
           const nivelRaw = clean(cells[indexes.nivel]);
           const derivacionRaw = clean(cells[indexes.derivacion]);
 
+          const responsible = CATALOG_MAPS.responsibleCodeSet.has(responsableRaw) ? responsableRaw : null;
+          const initiativeType = initiativeTypeFromValue(iniciativaRaw);
+          const correlativo = formatOrderNumber(ordenRaw);
+          const quarter = quarterRaw || null;
+          const verticalCode = CATALOG_MAPS.verticalCodeSet.has(verticalRaw) ? verticalRaw : null;
           const responsible = RESPONSIBLE_CODE_SET.has(responsableRaw) ? responsableRaw : null;
           const initiativeType = initiativeTypeFromValue(iniciativaRaw);
           const correlativo = formatOrderNumber(ordenRaw);
@@ -2373,6 +2425,14 @@ export default function App() {
       return buildVerticalGraph({ verticalCode: verticalViewCode, search, filters, studies, sortKey, sortDirection });
     return buildProductGraph({ productId, search, filters, studies, sortKey, sortDirection });
   }, [viewMode, productId, verticalViewCode, search, filters, studies, sortKey, sortDirection]);
+  const activeFiltersCount = useMemo(() => countActiveFilters(filters), [filters]);
+
+  const graph = useMemo(() => {
+    if (viewMode === "global") return buildGlobalGraph({ search, filters, studies, sortKey, sortDirection });
+    if (viewMode === "vertical")
+      return buildVerticalGraph({ verticalCode: verticalViewCode, search, filters, studies, sortKey, sortDirection });
+    return buildProductGraph({ productId, search, filters, studies, sortKey, sortDirection });
+  }, [viewMode, productId, verticalViewCode, search, filters, studies, sortKey, sortDirection]);
   useEffect(() => {
     if (viewMode === "global" && !search.trim()) setViewMode("product");
   }, [viewMode, search]);
@@ -2431,6 +2491,7 @@ export default function App() {
       const s = studies.find((x) => x.id === studyId);
       if (s?.productId) setProductId(s.productId);
       if (s?.verticalCode) setVerticalViewCode(s.verticalCode);
+      setSelectedStudyId(studyId);
       setSelectedStudyId(studyId);
       setSelectedStudyId(studyId);
       if (viewMode === "global") setViewMode("product");

@@ -98,6 +98,105 @@ const LEVELS = [
 
 // ---------------------------------
 // 1) PRODUCTO / FRANQUICIA (UI del grafo)
+// CSV NAMING PARSER
+// ---------------------------------
+const INITIATIVE_TYPE_DIGITS = Object.fromEntries(
+  INITIATIVE_TYPES.map((t) => {
+    const digit = t.code?.split("_")?.[1]?.split(".")?.[0] || "";
+    return [digit, t];
+  })
+);
+
+const VERTICAL_CODE_SET = new Set(VERTICAL_CODES.map((v) => v.code));
+const RESPONSIBLE_CODE_SET = new Set(RESPONSIBLES.map((r) => r.code));
+
+function parseCsvLine(line) {
+  const cells = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    const nextChar = line[i + 1];
+    if (char === '"' && inQuotes && nextChar === '"') {
+      current += '"';
+      i += 1;
+      continue;
+    }
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (char === "," && !inQuotes) {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+function parseInitiativeString(raw) {
+  if (!raw || typeof raw !== "string") return null;
+
+  // Responsable (K, M, C, etc.)
+  const responsibleMatch = raw.match(/^([A-Z])\s/);
+  const responsibleCandidate = responsibleMatch?.[1] || null;
+  const responsible = RESPONSIBLE_CODE_SET.has(responsibleCandidate) ? responsibleCandidate : null;
+
+  // Tipo [ 6 ] → Seguimiento
+  const typeMatch = raw.match(/\[\s*(\d)\s*\]/);
+  const typeDigit = typeMatch?.[1] || null;
+
+  const initiativeType = INITIATIVE_TYPE_DIGITS[typeDigit] || null;
+
+  // Correlativo
+  const numMatch = raw.match(/\]\s*(\d{3})\s*\(/);
+  const correlativo = numMatch?.[1] || "000";
+
+  // Quarter
+  const quarterMatch = raw.match(/\((Q\d\.\d{2})\)/);
+  const quarter = quarterMatch?.[1] || null;
+
+  // Vertical (UXR, APP, CRO, etc.)
+  const verticalMatch = raw.match(/\)\s*([A-Z]{2,5})/);
+  const verticalCandidate = verticalMatch?.[1] || null;
+  const verticalCode = verticalCandidate && VERTICAL_CODE_SET.has(verticalCandidate) ? verticalCandidate : null;
+
+  // Técnicas {Encuesta + Test}
+  const techniquesMatch = raw.match(/\{([^}]+)\}/);
+  let techniques = [];
+  if (techniquesMatch) {
+    const t = techniquesMatch[1].trim();
+    techniques = t.toLowerCase() === "mix" ? ["Mix"] : t.split("+").map((x) => x.trim());
+  }
+
+  // Título (lo que queda limpio)
+  const title = raw
+    .replace(/^.*?\)\s*[A-Z]{2,5}・?/, "")
+    .replace(/\{.*\}$/, "")
+    .trim();
+
+  return {
+    id: `CSV-${initiativeType?.code?.[2] || "X"}-${correlativo}`,
+    initiativeTypeCode: initiativeType?.code || null,
+    initiativeTypeLabel: initiativeType?.label || null,
+    quarter,
+    verticalCode,
+    titleShort: title,
+    techniques,
+    responsible,
+    levelKey: null,
+    status: "🟡 Importado",
+    verticalId: null,
+    subproductId: null,
+    parentId: null,
+  };
+}
+
+// ---------------------------------
+// 1) VERTICALES (UI del grafo) — renombradas + colores + nueva
 // ---------------------------------
 const PRODUCTS = [
   { id: "flow", name: "Flow", color: "#21D3A2", verticals: ["FLW"] },
@@ -201,6 +300,54 @@ function productMeta(productId) {
 
 function productIdForVertical(code) {
   return CATALOG_MAPS.verticalToProduct[code] || null;
+const INITIATIVE_TYPE_DIGITS = Object.fromEntries(
+  INITIATIVE_TYPES.map((t) => {
+    const digit = t.code?.split("_")?.[1]?.split(".")?.[0] || "";
+    return [digit, t];
+  })
+);
+
+const VERTICAL_CODE_MAP = Object.fromEntries(VERTICAL_CODES.map((v) => [v.code, v.label]));
+const VERTICAL_CODE_SET = new Set(VERTICAL_CODES.map((v) => v.code));
+const RESPONSIBLE_CODE_SET = new Set(RESPONSIBLES.map((r) => r.code));
+const PRODUCT_BY_ID = Object.fromEntries(PRODUCTS.map((p) => [p.id, p]));
+const VERTICAL_TO_PRODUCT = PRODUCTS.reduce((acc, product) => {
+  product.verticals.forEach((code) => {
+    acc[code] = product.id;
+  });
+  return acc;
+}, {});
+
+const LEVEL_LABEL_TO_KEY = Object.fromEntries(LEVELS.map((l) => [normalizeHeader(l.label), l.key]));
+
+function normalizeHeader(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/\s+/g, " ");
+}
+
+function slugify(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function verticalLabel(code) {
+  return VERTICAL_CODE_MAP[code] || code || "—";
+}
+
+function productMeta(productId) {
+  return PRODUCT_BY_ID[productId] || null;
+}
+
+function productIdForVertical(code) {
+  return VERTICAL_TO_PRODUCT[code] || null;
 }
 
 function normalizeTechniques(raw) {
@@ -263,11 +410,13 @@ function initiativeTypeFromValue(value) {
   const match = raw.match(/A_([0-9])\./) || raw.match(/([0-9])/);
   const digit = match?.[1] || null;
   return digit ? CATALOG_MAPS.initiativeTypeDigits[digit] || null : null;
+  return digit ? INITIATIVE_TYPE_DIGITS[digit] || null : null;
 }
 
 function levelKeyFromValue(value) {
   const normalized = normalizeHeader(value);
   return CATALOG_MAPS.levelLabelToKey[normalized] || null;
+  return LEVEL_LABEL_TO_KEY[normalized] || null;
 }
 
 // ---------------------------------
@@ -324,6 +473,7 @@ const DEFAULT_STUDIES = [
     subproductName: "Landing Música",
     subproductId: "FLW-landing-musica",
     parentId: "K-6-001",
+    parentId: "M-6-001",
     status: "🟡 Parcial",
     type: "Encuesta (derivada)",
     tools: ["(tool) Encuestas"],
@@ -620,6 +770,7 @@ function sortStudies(studies, sortKey, direction = "asc") {
 
 // Persistencia simple
 const STORAGE_KEY = "uxr_tree_studies_v6";
+const STORAGE_KEY = "uxr_tree_studies_v5";
 function loadStudies() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -1049,11 +1200,24 @@ function orderStudiesByHierarchy(arr) {
     (children.get(s.id) || []).forEach((c) => dfs(c, depth + 1));
   };
 
+  const out = [];
+  const dfs = (s, depth = 0) => {
+    out.push({ s, depth });
+    (children.get(s.id) || []).forEach((c) => dfs(c, depth + 1));
+  };
+
   roots.forEach((r) => dfs(r, 0));
   return out;
 }
 
 function buildProductGraph({ productId, search, filters, studies, sortKey, sortDirection }) {
+
+  roots.forEach((r) => dfs(r, 0));
+  return out;
+}
+
+function buildProductGraph({ productId, search, filters, studies, sortKey, sortDirection }) {
+function buildProductGraph({ productId, search, filters, studies }) {
   const product = productMeta(productId) || PRODUCTS[0];
   const scope = studies.filter((s) => s.productId === product.id);
   const filteredStudies = applySearchAndFilters(scope, search, filters);
@@ -1103,6 +1267,7 @@ function buildProductGraph({ productId, search, filters, studies, sortKey, sortD
     });
 
     const studiesInVertical = sortedStudies.filter((s) => s.verticalCode === vertical.code);
+    const studiesInVertical = filteredStudies.filter((s) => s.verticalCode === vertical.code);
     const subMap = new Map();
     studiesInVertical.forEach((s) => {
       const fallback = ensureSubproduct(s.verticalCode, s.subproductName);
@@ -1165,6 +1330,33 @@ function buildProductGraph({ productId, search, filters, studies, sortKey, sortD
         });
 
         if (s.parentId && filteredMap.has(s.parentId)) {
+
+      const ordered = orderStudiesByHierarchy(sub.items);
+      const baseY = 520;
+      ordered.forEach(({ s, depth }, idx) => {
+        const x = sx + depth * 120;
+        const y = baseY + idx * 140;
+        nodes.push({
+          id: `study:${s.id}`,
+          type: "study",
+          position: { x, y },
+          data: {
+            ...s,
+            verticalColor: product.color,
+            preview: clamp((s.insights?.[0] || s.notes || "").toString(), 120),
+          },
+        });
+
+        if (!s.parentId) {
+          edges.push({
+            id: `e:sub:${sub.id}->study:${s.id}`,
+            source: `sub:${product.id}:${vertical.code}:${sub.id}`,
+            target: `study:${s.id}`,
+            style: { strokeWidth: 2 },
+          });
+        }
+
+        if (s.parentId) {
           edges.push({
             id: `e:study:${s.parentId}->study:${s.id}`,
             source: `study:${s.parentId}`,
@@ -1193,6 +1385,8 @@ function buildGlobalGraph({ search, filters, studies, sortKey, sortDirection }) 
   const matchedMap = new Map(matched.map((s) => [s.id, s]));
   const byProduct = new Map();
   sortedMatched.forEach((s) => {
+  const byProduct = new Map();
+  matched.forEach((s) => {
     const pId = s.productId || "(sin producto)";
     if (!byProduct.has(pId)) byProduct.set(pId, []);
     byProduct.get(pId).push(s);
@@ -1316,6 +1510,33 @@ function buildGlobalGraph({ search, filters, studies, sortKey, sortDirection }) 
           });
 
           if (s.parentId && matchedMap.has(s.parentId)) {
+
+        const ordered = orderStudiesByHierarchy(sub.items);
+        const baseY = 540;
+        ordered.forEach(({ s, depth }, idx) => {
+          const x = sx + depth * 120;
+          const y = baseY + idx * 140;
+          nodes.push({
+            id: `study:${s.id}`,
+            type: "study",
+            position: { x, y },
+            data: {
+              ...s,
+              verticalColor: product.color,
+              preview: clamp((s.insights?.[0] || s.notes || "").toString(), 120),
+            },
+          });
+
+          if (!s.parentId) {
+            edges.push({
+              id: `e:sub:${sub.id}->study:${s.id}`,
+              source: `sub:${product.id}:${vertical.code}:${sub.id}`,
+              target: `study:${s.id}`,
+              style: { strokeWidth: 2 },
+            });
+          }
+
+          if (s.parentId) {
             edges.push({
               id: `e:study:${s.parentId}->study:${s.id}`,
               source: `study:${s.parentId}`,
@@ -1699,20 +1920,6 @@ function EditStudyForm({ value, onChange }) {
             placeholder="Q1.26"
           />
         </Field>
-
-        <Field label="Nivel" hint={allowedLevelHint || ""}>
-          <select
-            value={value.levelKey || ""}
-            onChange={(e) => set({ levelKey: e.target.value })}
-            className="w-full rounded-xl border px-3 py-2 text-sm"
-          >
-            {LEVELS.map((l) => (
-              <option key={l.key} value={l.key}>
-                {l.label}
-              </option>
-            ))}
-          </select>
-        </Field>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
@@ -1740,6 +1947,88 @@ function EditStudyForm({ value, onChange }) {
               </option>
             ))}
           </select>
+        </Field>
+
+        <Field label="Vertical (código)">
+          <select
+            value={value.verticalCode || ""}
+            onChange={(e) => {
+              const nextVerticalCode = e.target.value;
+              const nextProductId = productIdForVertical(nextVerticalCode) || value.productId;
+              const sub = ensureSubproduct(nextVerticalCode, value.subproductName);
+              set({
+                verticalCode: nextVerticalCode,
+                productId: nextProductId,
+                subproductId: sub.id,
+                subproductName: value.subproductName || sub.name,
+              });
+            }}
+            className="w-full rounded-xl border px-3 py-2 text-sm"
+          >
+            {verticalOptions.map((v) => (
+              <option key={v.code} value={v.code}>
+                {v.code} — {v.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <Field label="Nivel" hint={allowedLevelHint || ""}>
+          <select
+            value={value.levelKey || ""}
+            onChange={(e) => set({ levelKey: e.target.value })}
+            className="w-full rounded-xl border px-3 py-2 text-sm"
+          >
+            {LEVELS.map((l) => (
+              <option key={l.key} value={l.key}>
+                {l.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+      <div className="grid grid-cols-2 gap-4">
+        <Field label="Producto / Franquicia">
+        <Field label="Responsable" hint="Código corto para filtros y naming">
+          <select
+            value={value.productId || ""}
+            onChange={(e) => {
+              const nextProductId = e.target.value;
+              const options = verticalOptionsForProduct(nextProductId);
+              const hasVertical = options.some((option) => option.code === value.verticalCode);
+              const nextVerticalCode = hasVertical ? value.verticalCode : options[0]?.code || "";
+              const sub = ensureSubproduct(nextVerticalCode, value.subproductName);
+              set({
+                productId: nextProductId,
+                verticalCode: nextVerticalCode,
+                subproductId: sub.id,
+                subproductName: value.subproductName || sub.name,
+              });
+            }}
+            className="w-full rounded-xl border px-3 py-2 text-sm"
+          >
+            {PRODUCTS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <Field label="Subproducto (nombre)" hint="Se agrupa por vertical + subproducto">
+          <input
+            value={value.subproductName || ""}
+            onChange={(e) => {
+              const sub = ensureSubproduct(value.verticalCode, e.target.value);
+              set({ subproductName: e.target.value, subproductId: sub.id });
+            }}
+            className="w-full rounded-xl border px-3 py-2 text-sm"
+            placeholder="Ej: Flujo Portabilidad"
+          />
         </Field>
 
         <Field label="Vertical (código)">
@@ -1850,6 +2139,7 @@ function EditStudyForm({ value, onChange }) {
       </div>
 
       <Field label="Derivación" hint="Código de iniciativa madre (opcional)">
+      <Field label="ParentId" hint="Para derivadas (opcional)">
         <input
           value={value.parentId ? formatStudyCode(value.parentId) : ""}
           onChange={(e) => {
@@ -1985,6 +2275,48 @@ export default function App() {
         return;
       }
 
+
+      if (missing.length > 0) {
+        window.alert(
+          `El CSV debe incluir las columnas: Responsable, Iniciativa, Orden, Q, Vertical, Título, Método o recursos, Nivel, Derivación.`
+        );
+
+      if (!rows.length) return;
+
+      const headerCells = parseCsvLine(rows[0]).map((cell) => normalizeHeader(cell));
+      const headerIndex = (keyOptions) =>
+        headerCells.findIndex((cell) => keyOptions.some((k) => normalizeHeader(k) === cell));
+
+      const required = {
+        responsable: ["Responsable"],
+        iniciativa: ["Iniciativa"],
+        orden: ["Orden"],
+        quarter: ["Q"],
+        vertical: ["Vertical"],
+        titulo: ["Título", "Titulo"],
+        metodo: ["Método o recursos", "Metodo o recursos", "Metodo"],
+        nivel: ["Nivel"],
+      };
+
+      const indexes = Object.fromEntries(
+        Object.entries(required).map(([key, keys]) => [key, headerIndex(keys)])
+      );
+
+      const missing = Object.entries(indexes)
+        .filter(([, idx]) => idx === -1)
+        .map(([key]) => key);
+
+      if (missing.length > 0) {
+        window.alert(
+          `El CSV debe incluir las columnas: Responsable, Iniciativa, Orden, Q, Vertical, Título, Método o recursos, Nivel.`
+        );
+      const headerCells = parseCsvLine(rows[0]).map((cell) => cell.replaceAll('"', "").trim());
+      const initiativeIndex = headerCells.findIndex((cell) => cell === "Iniciativas");
+      if (initiativeIndex === -1) {
+        window.alert('El CSV debe incluir una columna llamada "Iniciativas".');
+        return;
+      }
+
       const imported = rows
         .slice(1)
         .map((line) => parseCsvLine(line))
@@ -2005,6 +2337,16 @@ export default function App() {
           const correlativo = formatOrderNumber(ordenRaw);
           const quarter = quarterRaw || null;
           const verticalCode = CATALOG_MAPS.verticalCodeSet.has(verticalRaw) ? verticalRaw : null;
+          const responsible = RESPONSIBLE_CODE_SET.has(responsableRaw) ? responsableRaw : null;
+          const initiativeType = initiativeTypeFromValue(iniciativaRaw);
+          const correlativo = formatOrderNumber(ordenRaw);
+
+          const responsible = RESPONSIBLE_CODE_SET.has(responsableRaw) ? responsableRaw : null;
+          const initiativeType = initiativeTypeFromValue(iniciativaRaw);
+          const orderNumber = parseInt(ordenRaw, 10);
+          const correlativo = Number.isFinite(orderNumber) ? String(orderNumber).padStart(3, "0") : "000";
+          const quarter = quarterRaw || null;
+          const verticalCode = VERTICAL_CODE_SET.has(verticalRaw) ? verticalRaw : null;
           const { subproductName, cleanedTitle } = extractSubproductFromTitle(tituloRaw);
           const subproduct = ensureSubproduct(verticalCode, subproductName);
           const productId = productIdForVertical(verticalCode);
@@ -2020,6 +2362,13 @@ export default function App() {
             initiativeTypeCode: initiativeType.code,
             initiativeTypeLabel: initiativeType.label,
             orderNumber: correlativo,
+
+          if (!initiativeType || !verticalCode || !productId || !cleanedTitle) return null;
+
+          return {
+            id: `M-${initiativeType.code?.split("_")?.[1]?.split(".")?.[0] || "0"}-${correlativo}`,
+            initiativeTypeCode: initiativeType.code,
+            initiativeTypeLabel: initiativeType.label,
             quarter,
             verticalCode,
             titleShort: cleanedTitle,
@@ -2031,6 +2380,7 @@ export default function App() {
             subproductName: subproduct.name,
             subproductId: subproduct.id,
             parentId,
+            parentId: null,
             type: "",
             tools: [],
             roles: { uxr: [], product: [], design: [], data: [], vendor: [] },
@@ -2039,6 +2389,10 @@ export default function App() {
             links: [],
           };
         })
+        .map((line) => parseCsvLine(line)[initiativeIndex] || "")
+        .map((cell) => cell.replaceAll('"', "").trim())
+        .filter(Boolean)
+        .map(parseInitiativeString)
         .filter(Boolean);
 
       setStudies((prev) => [...prev, ...imported]);
@@ -2048,6 +2402,7 @@ export default function App() {
 
   const [viewMode, setViewMode] = useState("product"); // product | vertical | global
   const [verticalViewCode, setVerticalViewCode] = useState(VERTICAL_CODES[0]?.code || "FLW");
+  const [viewMode, setViewMode] = useState("product"); // product | global
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [draft, setDraft] = useState(null);
@@ -2070,6 +2425,24 @@ export default function App() {
       return buildVerticalGraph({ verticalCode: verticalViewCode, search, filters, studies, sortKey, sortDirection });
     return buildProductGraph({ productId, search, filters, studies, sortKey, sortDirection });
   }, [viewMode, productId, verticalViewCode, search, filters, studies, sortKey, sortDirection]);
+  const activeFiltersCount = useMemo(() => countActiveFilters(filters), [filters]);
+
+  const graph = useMemo(() => {
+    if (viewMode === "global") return buildGlobalGraph({ search, filters, studies, sortKey, sortDirection });
+    if (viewMode === "vertical")
+      return buildVerticalGraph({ verticalCode: verticalViewCode, search, filters, studies, sortKey, sortDirection });
+    return buildProductGraph({ productId, search, filters, studies, sortKey, sortDirection });
+  }, [viewMode, productId, verticalViewCode, search, filters, studies, sortKey, sortDirection]);
+  useEffect(() => {
+    if (viewMode === "global" && !search.trim()) setViewMode("product");
+  }, [viewMode, search]);
+
+  const activeFiltersCount = useMemo(() => countActiveFilters(filters), [filters]);
+
+  const graph = useMemo(() => {
+    if (viewMode === "global") return buildGlobalGraph({ search, filters, studies });
+    return buildProductGraph({ productId, search, filters, studies });
+  }, [viewMode, productId, search, filters, studies]);
 
   const selectedStudy = useMemo(() => {
     if (!selectedStudyId) return null;
@@ -2119,6 +2492,9 @@ export default function App() {
       if (s?.productId) setProductId(s.productId);
       if (s?.verticalCode) setVerticalViewCode(s.verticalCode);
       setSelectedStudyId(studyId);
+      setSelectedStudyId(studyId);
+      setSelectedStudyId(studyId);
+      if (viewMode === "global") setViewMode("product");
     },
     [studies]
   );
@@ -2134,6 +2510,11 @@ export default function App() {
     if (viewMode === "product" && s.productId !== productId) setSelectedStudyId(null);
     if (viewMode === "vertical" && s.verticalCode !== verticalViewCode) setSelectedStudyId(null);
   }, [viewMode, productId, verticalViewCode, selectedStudyId, studies]);
+    if (viewMode !== "product") return;
+    if (!selectedStudyId) return;
+    const s = studies.find((x) => x.id === selectedStudyId);
+    if (!s || s.productId !== productId) setSelectedStudyId(null);
+  }, [viewMode, productId, selectedStudyId, studies]);
 
   const openEdit = useCallback(() => {
     if (!selectedStudy) return;
@@ -2148,6 +2529,7 @@ export default function App() {
     const defaultResponsible = RESPONSIBLES[0]?.code || "";
     const nextOrder = nextOrderNumberForType(studies, defaultType.code, defaultResponsible);
     const newId = buildStudyId(defaultResponsible, defaultType.code, nextOrder);
+    const newId = nextIdForType(studies, defaultType.code);
     const defaultVertical = product?.verticals?.[0] || VERTICAL_CODES[0]?.code || "";
     const subproduct = ensureSubproduct(defaultVertical, "");
 
@@ -2270,6 +2652,12 @@ export default function App() {
     return p ? p.name : "Vista";
   }, [viewMode, productId, verticalViewCode]);
 
+  const viewTitle = useMemo(() => {
+    if (viewMode === "global") return "Resultados globales";
+    const p = productMeta(productId);
+    return p ? p.name : "Vista";
+  }, [viewMode, productId]);
+
   return (
     <div className="h-screen w-full bg-zinc-50">
       <FilterModal
@@ -2368,6 +2756,17 @@ export default function App() {
                   Global
                 </button>
               </div>
+              <button
+                onClick={() => setViewMode((m) => (m === "global" ? "product" : "global"))}
+                disabled={!search.trim()}
+                className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm hover:bg-zinc-50 ${
+                  !search.trim() ? "opacity-50" : ""
+                }`}
+                title={search.trim() ? "Alternar vista global/producto" : "Escribí una búsqueda para habilitar"}
+              >
+                <Filter className="h-4 w-4" />
+                {viewMode === "global" ? "Ver producto" : "Ver grafo global"}
+              </button>
             </div>
 
             <div className="mt-4">
